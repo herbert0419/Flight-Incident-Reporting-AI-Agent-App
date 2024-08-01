@@ -1,16 +1,19 @@
+from dotenv import load_dotenv
 import streamlit as st
 import os
 import base64
 from pydub import AudioSegment
 from openai import OpenAI
-from dotenv import load_dotenv
-from crewai import Agent, Task, Crew, Process
-from langchain_openai import AzureChatOpenAI
+from crewai import Crew, Task, Agent
 from docx import Document
 from io import BytesIO
 import base64
+from groq import Groq
+from langchain_openai import AzureChatOpenAI
+
 
 load_dotenv()
+
 
 def generate_docx(result):
     doc = Document()
@@ -21,19 +24,18 @@ def generate_docx(result):
     bio.seek(0)
     return bio
 
+
 def get_download_link(bio, filename):
     b64 = base64.b64encode(bio.read()).decode()
     return f'<a href="data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,{b64}" download="{filename}">Download Flight Incident Report</a>'
 
+
 # Initialize OpenAI client
-groq = OpenAI(
-    api_key=os.environ["GROQ_API_KEY"],
-    base_url="https://api.groq.com/openai/v1"
-)
+openai = OpenAI(api_key=os.environ["GROQ_API_KEY"])  # Assuming Groq uses OpenAI API
 
 llm = AzureChatOpenAI(
     openai_api_version=os.environ["OPENAI_API_GPT_4_VERSION"],
-    azure_deployment="gpt-4o",
+    azure_deployment="flight-report",
     model="gpt-4o",
     temperature=0.7,
     openai_api_key=os.environ["OPENAI_API_GPT_4_KEY"],
@@ -46,6 +48,7 @@ def audio_to_base64(file):
     audio_bytes = audio_file.read()
     base64_audio = base64.b64encode(audio_bytes).decode()
     return base64_audio
+
 
 st.set_page_config(
     layout="wide",
@@ -66,7 +69,7 @@ with col1:
 
         # Convert the uploaded MP3 file to base64 for embedding in HTML
         base64_audio = audio_to_base64("uploaded_file.mp3")
-        
+
         # Embed the audio file in HTML
         audio_html = f"""
             <audio controls>
@@ -79,62 +82,45 @@ with col1:
 
         if st.button("Analyze"):
 
+            client = Groq()
             # Transcribe the audio using OpenAI API
             with open("uploaded_file.mp3", "rb") as audio_file:
-                transcript = groq.audio.transcriptions.create(
-                    model="whisper-large-v3",
+                response = client.audio.transcriptions.create(
                     file=audio_file,
+                    model="whisper-large-v3",
                     response_format="text"
                 )
+            
 
-            st.success("Raw Transcription: " + transcript)
+            st.success("Raw Transcription: " + response)
 
             with col2:
-                # Placeholder for future use or additional functionalities
-                with st.spinner("Processing"):
-                    # Define Agents
-                    transcription_reader = Agent(
-                        role="ATC Blackbox Transcription Reader",
-                        goal="Read the transcription from an ATC Blackbox and clean the transcription and create a conversation flow.",
-                        backstory="This agent specializes in reading the transcript from an ATC Blackbox and clean the transcript to create a conversation flow so it is easier to interpret.",
-                        verbose=True,
-                        allow_delegation=False,
-                        llm=llm
-                    )
+                # Define Agents
+                transcription_reader = Agent(
+                    role="ATC Blackbox Transcription Reader",
+                    goal="Read the transcription from an ATC Blackbox and clean it for creating a conversation flow.",
+                    backstory="This agent specializes in cleaning and structuring ATC Blackbox transcripts to facilitate analysis.",
+                    llm=llm  # Assuming OpenAI client for both tasks
+                )
 
-                    incident_report_writer = Agent(
-                        role="Incident Reporter",
-                        goal="Generate a detailed incident investigation report based on the transcription data.",
-                        backstory="This agent specializes in creating comprehensive incident investigation reports for aviation incidents. It considers the cleaned transcription data, communication logs, and aviation protocols to provide a detailed report.",
-                        verbose=True,
-                        allow_delegation=False,
-                        llm=llm
-                    )
+                incident_report_writer = Agent(
+                    role="Incident Reporter",
+                    goal="Generate a detailed incident investigation report based on the cleaned transcription.",
+                    backstory="This agent specializes in creating comprehensive incident investigation reports for aviation incidents.",
+                    llm=llm  # Assuming OpenAI client for both tasks
+                )
 
-                    # Task for the transcription reader agent
-                    clean_transcription_task = Task(
-                        description='Read the transcription from an ATC Blackbox, clean it, and create a conversation flow.',
-                        agent=transcription_reader,
-                        expected_output='Formatted transcription as conversation.',
-                        inputs={'transcription': transcript}
-                    )
+                # Task for the transcription reader agent
+                clean_transcription_task = Task(
+                    description="Clean the ATC Blackbox transcription and create a conversation flow.",
+                    agent=transcription_reader,
+                    inputs={"transcription": response},
+                    expected_output="Formatted conversation flow from the transcript"
+                )
 
-                    # Task for the incident report writer agent
-                    incident_report_task = Task(
-                        description='Generate a detailed incident investigation report based on the cleaned transcription.',
-                        agent=incident_report_writer,
-                        expected_output='Detailed incident investigation report.'
-                    )
-                    # Create Crew
-                    crew = Crew(
-                        agents=[transcription_reader, incident_report_writer],
-                        tasks=[clean_transcription_task, incident_report_task],
-                        process=Process.sequential,
-                        verbose=2
-                    )
-
-                    result = crew.kickoff()
-                    st.subheader("Incident Report")
-                    st.write(result)
-
-
+                # Task for the incident report writer agent
+                incident_report_task = Task(
+                    description="Generate a detailed incident investigation report based on the cleaned transcription.",
+                    agent=incident_report_writer,
+                    inputs={"cleaned_transcription": clean_transcription_task.output},  # Chain task outputs
+                )

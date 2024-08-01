@@ -1,9 +1,12 @@
+from groq import Groq
 import streamlit as st
 import os
 import base64
 from pydub import AudioSegment
 from openai import OpenAI
 from dotenv import load_dotenv
+from langchain_openai import AzureChatOpenAI
+
 
 load_dotenv()
 
@@ -13,12 +16,12 @@ groq = OpenAI(
     base_url="https://api.groq.com/openai/v1"
 )
 
-llm = AzureChatOpenAI(openai_api_version=OPENAI_API_GPT_4_VERSION,
-                    azure_deployment=DEPLOYMENT_NAME_GPT_4o,
+llm = AzureChatOpenAI(openai_api_version=os.environ["OPENAI_API_GPT_4_VERSION"],
+                    azure_deployment="flight-report",
                     model="gpt-4o",
                     temperature=0.7,
-                    openai_api_key=OPENAI_API_GPT_4_KEY,
-                    azure_endpoint=OPENAI_API_GPT_4_BASE
+                    openai_api_key=os.environ["OPENAI_API_GPT_4_KEY"],
+                    azure_endpoint=os.environ["OPENAI_API_GPT_4_BASE"]
 )
 
 # Function to convert audio file to base64
@@ -41,8 +44,8 @@ uploaded_file = st.file_uploader("Upload an MP3 file", type=["mp3"])
 
 if uploaded_file is not None:
 # Save the uploaded file to disk
-with open("uploaded_file.mp3", "wb") as f:
-f.write(uploaded_file.getbuffer())
+    with open("uploaded_file.mp3", "wb") as f:
+        f.write(uploaded_file.getbuffer())
 
 # Convert the uploaded MP3 file to base64 for embedding in HTML
 base64_audio = audio_to_base64("uploaded_file.mp3")
@@ -60,11 +63,20 @@ st.markdown(audio_html, unsafe_allow_html=True)
 if st.button("Analyze"):
 
 # Transcribe the audio using OpenAI API
-with open("uploaded_file.mp3", "rb") as audio_file:
-    transcript = groq.audio.transcriptions.create(
+
+    client = Groq()
+    # with open("uploaded_file.mp3", "rb") as audio_file:
+    #     transcript = groq.audio.transcriptions.create(
+    #     model="whisper-large-v3",
+    #     file=audio_file,
+    #     response_format="text"
+    # )
+    
+    with open("uploaded_file.mp3", "rb") as file:
+        transcript = client.audio.transcriptions.create(
+        file=("uploaded_file.mp3", file.read()),
         model="whisper-large-v3",
-        file=audio_file,
-        response_format="text"
+        response_format="verbose_json",
     )
 
 st.success("Raw Transcription: "+transcript)
